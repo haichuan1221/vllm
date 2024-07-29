@@ -1,6 +1,7 @@
 import time
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, ClassVar, Dict, Iterable, List, Optional
+from typing import (TYPE_CHECKING, Any, ClassVar, Dict, Iterable, List,
+                    Mapping, Optional)
 from typing import Sequence as GenericSequence
 from typing import Set, Type, TypeVar, Union
 
@@ -393,8 +394,14 @@ class LLMEngine:
             from vllm.executor.neuron_executor import NeuronExecutor
             executor_class = NeuronExecutor
         elif engine_config.device_config.device_type == "tpu":
-            from vllm.executor.tpu_executor import TPUExecutor
-            executor_class = TPUExecutor
+            if distributed_executor_backend == "ray":
+                initialize_ray_cluster(engine_config.parallel_config)
+                from vllm.executor.ray_tpu_executor import RayTPUExecutor
+                executor_class = RayTPUExecutor
+            else:
+                assert distributed_executor_backend is None
+                from vllm.executor.tpu_executor import TPUExecutor
+                executor_class = TPUExecutor
         elif engine_config.device_config.device_type == "cpu":
             from vllm.executor.cpu_executor import CPUExecutor
             executor_class = CPUExecutor
@@ -522,7 +529,7 @@ class LLMEngine:
         arrival_time: float,
         lora_request: Optional[LoRARequest],
         prompt_adapter_request: Optional[PromptAdapterRequest],
-        trace_headers: Optional[Dict[str, str]] = None,
+        trace_headers: Optional[Mapping[str, str]] = None,
     ) -> None:
         # Create the sequences.
         block_size = self.cache_config.block_size
@@ -603,7 +610,7 @@ class LLMEngine:
         params: Union[SamplingParams, PoolingParams],
         arrival_time: Optional[float] = None,
         lora_request: Optional[LoRARequest] = None,
-        trace_headers: Optional[Dict[str, str]] = None,
+        trace_headers: Optional[Mapping[str, str]] = None,
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
     ) -> None:
         """Add a request to the engine's request pool.
@@ -677,7 +684,7 @@ class LLMEngine:
         sampling_params: SamplingParams,
         arrival_time: float,
         lora_request: Optional[LoRARequest],
-        trace_headers: Optional[Dict[str, str]] = None,
+        trace_headers: Optional[Mapping[str, str]] = None,
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
     ) -> SequenceGroup:
         """Creates a SequenceGroup with SamplingParams."""
@@ -948,8 +955,9 @@ class LLMEngine:
             model_output: Optional[List[SamplerOutput]] = None) -> None:
         """Forced log when no requests active."""
         if self.log_stats:
+            stats = self._get_stats(scheduler_outputs, model_output)
             for logger in self.stat_loggers.values():
-                logger.log(self._get_stats(scheduler_outputs, model_output))
+                logger.log(stats)
 
     def _get_stats(
             self,
